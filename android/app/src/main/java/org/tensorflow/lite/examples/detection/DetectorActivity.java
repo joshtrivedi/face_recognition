@@ -16,8 +16,10 @@
 
 package org.tensorflow.lite.examples.detection;
 
+import android.Manifest;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
 import android.graphics.Canvas;
@@ -29,8 +31,11 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.hardware.camera2.CameraCharacteristics;
 import android.media.ImageReader.OnImageAvailableListener;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.Size;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
@@ -40,6 +45,10 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.RequiresApi;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.mlkit.vision.common.InputImage;
@@ -48,9 +57,6 @@ import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
 
-import java.io.IOException;
-import java.util.LinkedList;
-import java.util.List;
 import org.tensorflow.lite.examples.detection.customview.OverlayView;
 import org.tensorflow.lite.examples.detection.customview.OverlayView.DrawCallback;
 import org.tensorflow.lite.examples.detection.env.BorderedText;
@@ -60,13 +66,22 @@ import org.tensorflow.lite.examples.detection.tflite.SimilarityClassifier;
 import org.tensorflow.lite.examples.detection.tflite.TFLiteObjectDetectionAPIModel;
 import org.tensorflow.lite.examples.detection.tracking.MultiBoxTracker;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FilenameFilter;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.LinkedList;
+import java.util.List;
+
 /**
  * An activity that uses a TensorFlowMultiBoxDetector and ObjectTracker to detect and then track
  * objects.
  */
 public class DetectorActivity extends CameraActivity implements OnImageAvailableListener {
   private static final Logger LOGGER = new Logger();
-
 
   // FaceNet
 //  private static final int TF_OD_API_INPUT_SIZE = 160;
@@ -128,8 +143,54 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
 
   private FloatingActionButton fabAdd;
 
+  private int EXTERNAL_STORAGE_CODE = 23;
   //private HashMap<String, Classifier.Recognition> knownFaces = new HashMap<>();
+  
+  //function to store image
 
+  private boolean storeImage(Bitmap image){
+
+    File pictureFile = getOutputMediaFile();
+    if (pictureFile == null) {
+      Log.d("Er", "Check Storage permissions");
+      return false;
+    }
+    try{
+      FileOutputStream fos = new FileOutputStream(pictureFile);
+      image.compress(Bitmap.CompressFormat.PNG, 90, fos);
+      fos.close();
+      return  true;
+    }catch (FileNotFoundException e) {
+      Log.d("FNF Er", "File Not Found: "+e.getMessage());
+      return false;
+    }catch (IOException e) {
+      Log.d("IOE Er", "Error Accessing File: "+e.getMessage());
+      return false;
+    }
+  }
+
+  private File getOutputMediaFile() {
+    File mediaStorageDir = new File(Environment.getExternalStorageDirectory()
+            + "/Android/data/"
+            + getApplicationContext().getPackageName()
+            + "/Files");
+
+    // This location works best if you want the created images to be shared
+    // between applications and persist after your app has been uninstalled.
+
+    // Create the storage directory if it does not exist
+    if (! mediaStorageDir.exists()){
+      if (! mediaStorageDir.mkdirs()){
+        return null;
+      }
+    }
+    // Create a media file name
+    String timeStamp = new SimpleDateFormat("ddMMyyyy_HHmm").format(new Date());
+    File mediaFile;
+    String mImageName="MI_"+ timeStamp +".jpg";
+    mediaFile = new File(mediaStorageDir.getPath() + File.separator + mImageName);
+    return mediaFile;
+  }
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -153,11 +214,9 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
 
 
     FaceDetector detector = FaceDetection.getClient(options);
-
+    
     faceDetector = detector;
 
-
-    //checkWritePermission();
 
   }
 
@@ -179,8 +238,7 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
     borderedText.setTypeface(Typeface.MONOSPACE);
 
     tracker = new MultiBoxTracker(this);
-
-
+    
     try {
       detector =
               TFLiteObjectDetectionAPIModel.create(
@@ -226,7 +284,6 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
 
     portraitBmp = Bitmap.createBitmap(targetW, targetH, Config.ARGB_8888);
     faceBmp = Bitmap.createBitmap(TF_OD_API_INPUT_SIZE, TF_OD_API_INPUT_SIZE, Config.ARGB_8888);
-
     frameToCropTransform =
             ImageUtils.getTransformationMatrix(
                     previewWidth, previewHeight,
@@ -394,6 +451,7 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
     tvTitle.setText("Add Face");
     ivFace.setImageBitmap(rec.getCrop());
     etName.setHint("Input name");
+    System.out.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA Class: "+rec.getClass());
 
     builder.setPositiveButton("OK", new DialogInterface.OnClickListener(){
       @Override
@@ -401,11 +459,20 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
 
           String name = etName.getText().toString();
           if (name.isEmpty()) {
+            Toast.makeText(DetectorActivity.this, "Add a valid name", Toast.LENGTH_SHORT).show();
               return;
           }
+          boolean result = storeImage(rec.getCrop());
           detector.register(name, rec);
           //knownFaces.put(name, rec);
-          dlg.dismiss();
+          //dlg.dismiss();
+          if (result == false) {
+            Toast.makeText(DetectorActivity.this, "Not saved", Toast.LENGTH_SHORT).show();
+            dlg.dismiss();
+          } else {
+            Toast.makeText(DetectorActivity.this, "Saved", Toast.LENGTH_SHORT).show();
+            dlg.dismiss();
+          }
       }
     });
     builder.setView(dialogLayout);
@@ -582,13 +649,10 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
         result.setExtra(extra);
         result.setCrop(crop);
         mappedRecognitions.add(result);
-
       }
 
-
     }
-
-    //    if (saved) {
+//        if (saved) {
 //      lastSaved = System.currentTimeMillis();
 //    }
 
@@ -599,3 +663,5 @@ public class DetectorActivity extends CameraActivity implements OnImageAvailable
 
 
 }
+
+
